@@ -152,11 +152,13 @@
     <div class="toast" id="toast"></div>
 
     <!-- Sync Setup Modal -->
-    <dialog class="modal" id="syncModal">
-        <div class="modal-content" id="syncModalContent">
-            <!-- injected by JS -->
+    <div class="modal-overlay" id="syncOverlay" style="display:none">
+        <div class="modal" id="syncModal">
+            <div class="modal-content" id="syncModalContent">
+                <!-- injected by JS -->
+            </div>
         </div>
-    </dialog>
+    </div>
 
     <script src="app.js"></script>
 </body>

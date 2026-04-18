@@ -254,8 +254,15 @@ function renderSyncBtn() {
 
 // ---- Sync setup modal ----
 function openSyncModal() {
-    const modal = document.getElementById('syncModal');
+    try {
+    const overlay = document.getElementById('syncOverlay');
     const content = document.getElementById('syncModalContent');
+    if (!overlay || !content) { showToast('ERROR: MODAL ELEMENTS MISSING'); return; }
+
+    const closeModal = () => { overlay.style.display = 'none'; };
+
+    // Close on backdrop click
+    overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
 
     if (syncConfig) {
         content.innerHTML = `
@@ -271,12 +278,12 @@ function openSyncModal() {
                 <button class="btn btn-accent" id="modalCloseBtn">CLOSE</button>
             </div>
         `;
-        content.querySelector('#modalCloseBtn').addEventListener('click', () => modal.close());
+        content.querySelector('#modalCloseBtn').addEventListener('click', closeModal);
         content.querySelector('#modalDisconnectBtn').addEventListener('click', () => {
             clearSyncConfig();
             renderSyncBtn();
             setSyncStatusLabel('CLOUD SYNC OFFLINE', 'offline');
-            modal.close();
+            closeModal();
             showToast('SYNC DISCONNECTED // DATA STAYS LOCAL');
         });
     } else {
@@ -293,13 +300,13 @@ function openSyncModal() {
                 <label class="mono-label">GITHUB TOKEN</label>
                 <input type="password" id="patInput" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off" spellcheck="false">
             </div>
-            <div id="syncError" class="sync-error" hidden></div>
+            <div id="syncError" class="sync-error" style="display:none"></div>
             <div class="modal-actions">
                 <button class="btn btn-ghost" id="modalCancelBtn">CANCEL</button>
                 <button class="btn btn-accent" id="modalConnectBtn">CONNECT</button>
             </div>
         `;
-        content.querySelector('#modalCancelBtn').addEventListener('click', () => modal.close());
+        content.querySelector('#modalCancelBtn').addEventListener('click', closeModal);
         const connectBtn = content.querySelector('#modalConnectBtn');
         const patInput = content.querySelector('#patInput');
         const errEl = content.querySelector('#syncError');
@@ -309,12 +316,12 @@ function openSyncModal() {
             if (!pat) { showSyncError(errEl, 'Please enter your GitHub token.'); return; }
             connectBtn.textContent = 'CONNECTING...';
             connectBtn.disabled = true;
-            errEl.hidden = true;
+            errEl.style.display = 'none';
             try {
                 const gistId = await findOrCreateGist(pat);
                 saveSyncConfig({ pat, gistId });
                 renderSyncBtn();
-                modal.close();
+                closeModal();
                 showToast('SYNC CONNECTED // LOADING YOUR DATA');
                 await loadFromGist();
             } catch (e) {
@@ -329,12 +336,13 @@ function openSyncModal() {
         });
     }
 
-    modal.showModal();
+    overlay.style.display = 'flex';
+    } catch(err) { showToast('SYNC ERROR: ' + err.message); console.error(err); }
 }
 
 function showSyncError(el, msg) {
     el.textContent = msg;
-    el.hidden = false;
+    el.style.display = 'block';
 }
 
 // ---- Month / data helpers ----
