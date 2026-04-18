@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0a0e27">
+    <title>LEDGER // Monthly Budget</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;900&family=Rajdhani:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="grid-bg"></div>
+    <div class="scanlines"></div>
+
+    <div class="app">
+        <header class="header">
+            <div class="brand">
+                <div class="logo-mark">◈</div>
+                <div>
+                    <h1>LEDGER</h1>
+                    <div class="subtitle">PERSONAL FINANCE TERMINAL // <span id="versionTag">v2026.4</span></div>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-sync" id="syncBtn">
+                    <span class="sync-icon" id="syncIcon">☁</span>
+                    <span id="syncLabel">CONNECT SYNC</span>
+                </button>
+            </div>
+        </header>
+
+        <section class="month-bar panel">
+            <button class="nav-btn" id="prevMonth" aria-label="Previous month">◀</button>
+            <div class="month-display">
+                <div class="month-label">ACTIVE CYCLE</div>
+                <select id="monthSelect" class="month-select"></select>
+            </div>
+            <button class="nav-btn" id="nextMonth" aria-label="Next month">▶</button>
+            <button class="btn btn-accent" id="newMonthBtn">
+                <span class="btn-icon">+</span> NEW CYCLE
+            </button>
+        </section>
+
+        <section class="summary-grid">
+            <div class="kpi panel">
+                <div class="kpi-label">PROJECTED INVESTMENTS/SAVINGS</div>
+                <div class="kpi-value" id="projSavings">$0.00</div>
+                <div class="kpi-accent"></div>
+            </div>
+            <div class="kpi panel">
+                <div class="kpi-label">ACTUAL INVESTMENTS/SAVINGS</div>
+                <div class="kpi-value" id="actSavings">$0.00</div>
+                <div class="kpi-accent accent-green"></div>
+            </div>
+            <div class="kpi panel">
+                <div class="kpi-label">PROJECTED EXPENSES</div>
+                <div class="kpi-value" id="projExpenses">$0.00</div>
+                <div class="kpi-accent accent-magenta"></div>
+            </div>
+            <div class="kpi panel">
+                <div class="kpi-label">ACTUAL EXPENSES</div>
+                <div class="kpi-value" id="actExpenses">$0.00</div>
+                <div class="kpi-accent accent-red"></div>
+            </div>
+            <div class="kpi panel kpi-wide">
+                <div class="kpi-label">OVERALL // ACTUAL NET</div>
+                <div class="kpi-value kpi-xl" id="overallNet">$0.00</div>
+                <div class="kpi-status" id="overallStatus">— AWAITING DATA</div>
+                <div class="kpi-accent accent-cyan"></div>
+            </div>
+        </section>
+
+        <section class="panel ira-panel">
+            <div class="section-head">
+                <h2>ROTH IRA // ANNUAL TRAJECTORY</h2>
+                <div class="year-select-wrap">
+                    <span class="year-label">YEAR</span>
+                    <select id="yearSelect" class="year-select"></select>
+                </div>
+            </div>
+            <div class="ira-stats">
+                <div class="ira-stat">
+                    <div class="ira-stat-label">CONTRIBUTED</div>
+                    <div class="ira-stat-value" id="iraContributed">$0.00</div>
+                </div>
+                <div class="ira-stat">
+                    <div class="ira-stat-label">REMAINING</div>
+                    <div class="ira-stat-value" id="iraRemaining">$7,500.00</div>
+                </div>
+                <div class="ira-stat">
+                    <div class="ira-stat-label">TARGET</div>
+                    <div class="ira-stat-value">
+                        <input type="number" id="iraTarget" value="7500" step="100" min="0">
+                    </div>
+                </div>
+                <div class="ira-stat">
+                    <div class="ira-stat-label">PROGRESS</div>
+                    <div class="ira-stat-value" id="iraPercent">0%</div>
+                </div>
+            </div>
+            <div class="progress-track">
+                <div class="progress-fill" id="iraProgressFill"></div>
+                <div class="progress-glow"></div>
+            </div>
+            <div class="ira-months" id="iraMonths"></div>
+        </section>
+
+        <section class="panel category-panel" data-category="investments">
+            <div class="section-head">
+                <h2>INVESTMENTS // SAVINGS</h2>
+                <div class="section-totals" id="investmentsTotals">—</div>
+            </div>
+            <div class="category-grid" id="investmentsGrid"></div>
+        </section>
+
+        <section class="panel category-panel" data-category="creditCards">
+            <div class="section-head">
+                <h2>CREDIT CARDS</h2>
+                <div class="section-totals" id="creditCardsTotals">—</div>
+            </div>
+            <div class="category-grid" id="creditCardsGrid"></div>
+        </section>
+
+        <section class="panel category-panel" data-category="otherExpenses">
+            <div class="section-head">
+                <h2>UTILITIES // RECURRING</h2>
+                <div class="section-totals" id="otherExpensesTotals">—</div>
+            </div>
+            <div class="category-grid" id="otherExpensesGrid"></div>
+        </section>
+
+        <section class="panel notes-panel">
+            <div class="section-head">
+                <h2>LOG // NOTES</h2>
+            </div>
+            <textarea id="notesField" placeholder="Log notes for this cycle..."></textarea>
+        </section>
+
+        <footer class="footer">
+            <div class="status-line">
+                <span class="status-dot"></span>
+                <span id="saveStatus">LOCAL STATE SYNCED</span>
+            </div>
+            <div class="footer-meta">
+                <span id="syncStatus">CLOUD SYNC OFFLINE</span>
+            </div>
+        </footer>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- Sync Setup Modal -->
+    <dialog class="modal" id="syncModal">
+        <div class="modal-content" id="syncModalContent">
+            <!-- injected by JS -->
+        </div>
+    </dialog>
+
+    <script src="app.js"></script>
+</body>
+</html>
