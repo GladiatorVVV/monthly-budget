@@ -23,7 +23,7 @@ const CATEGORIES = {
         type: 'expense',
         items: [
             { id: 'robinhoodGold', name: 'Robinhood Gold' },
-            { id: 'amexPlatinum', name: 'AMEX Platinum' },
+            { id: 'amexGold', name: 'AMEX Gold' },
             { id: 'primeVisa', name: 'Prime Visa' },
             { id: 'freedomUnlimited', name: 'Freedom Unlimited' },
             { id: 'costcoCiti', name: 'Costco Citi' },
