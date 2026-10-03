@@ -499,6 +499,29 @@ function iraYearTotal(year) {
     return t;
 }
 
+// ---- Item progress (actual as % of projected) ----
+// Blue below 100.00%, green at exactly 100.00%, red above it (compared at 2-decimal precision)
+function itemProgress(v) {
+    const projected = Number(v.projected) || 0;
+    const actual = Number(v.actual) || 0;
+    if (projected <= 0) {
+        return actual > 0
+            ? { width: 100, cls: 'prog-over', label: 'NO PROJECTION SET' }
+            : { width: 0, cls: 'prog-under', label: '0.00%' };
+    }
+    const pct = Math.round((actual / projected) * 10000) / 100;
+    const cls = pct > 100 ? 'prog-over' : pct === 100 ? 'prog-done' : 'prog-under';
+    return { width: Math.min(100, pct), cls, label: `${pct.toFixed(2)}%` };
+}
+
+function progressHtml(v) {
+    const p = itemProgress(v);
+    return `<div class="cat-progress ${p.cls}">
+        <div class="cat-progress-track"><div class="cat-progress-fill" style="width:${p.width}%"></div></div>
+        <span class="cat-progress-pct">${p.label}</span>
+    </div>`;
+}
+
 // ---- Rendering ----
 function renderCategory(catKey) {
     const cat = CATEGORIES[catKey];
@@ -541,6 +564,7 @@ function renderCategory(catKey) {
                     </div>
                 </div>
             </div>
+            ${progressHtml(v)}
             <div class="cat-diff ${diffClass}"><span>${diffLabel}</span></div>
         `;
         grid.appendChild(el);
@@ -1297,6 +1321,7 @@ function updateCardDiff(catKey, itemId) {
     diffEl.className = `cat-diff ${diffClass}`;
     diffEl.innerHTML = `<span>${diffLabel}</span>`;
     card.classList.toggle('has-diff', hasActual && diff !== 0);
+    card.querySelector('.cat-progress').outerHTML = progressHtml(v);
 }
 
 function updateCategoryTotals(catKey) {
