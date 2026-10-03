@@ -58,6 +58,7 @@ let syncInFlight = false;
 
 // ---- View state ----
 let reviewYear = null; // year whose annual report is shown, or null for the monthly view
+let reviewReturnMonth = null; // cycle to go back to when the YTD button closes the report
 
 // ---- Helpers ----
 function emptyMonth() {
@@ -404,13 +405,18 @@ function sortedMonthKeys() {
     return Object.keys(state.months).sort();
 }
 
-// Navigation order: every month, with a year-in-review stop right after each December
+// Navigation order: every month, with a year-in-review stop right after each December.
+// An open year-to-date report (year without a December yet) sits after that year's last cycle.
 function navEntries() {
     const entries = [];
-    sortedMonthKeys().forEach(k => {
+    const keys = sortedMonthKeys();
+    keys.forEach((k, i) => {
         entries.push({ type: 'month', key: k });
         const { year, monthIdx } = parseMonthKey(k);
-        if (monthIdx === 11) entries.push({ type: 'review', year, key: `review:${year}` });
+        const lastOfYear = !keys[i + 1] || parseMonthKey(keys[i + 1]).year !== year;
+        if (monthIdx === 11 || (lastOfYear && year === reviewYear)) {
+            entries.push({ type: 'review', year, key: `review:${year}` });
+        }
     });
     return entries;
 }
@@ -419,15 +425,36 @@ function hasReview(year) {
     return !!state.months[monthKey(year, 11)];
 }
 
+function yearMonthKeys(year) {
+    return sortedMonthKeys().filter(k => parseMonthKey(k).year === year);
+}
+
 function openMonth(key) {
     ensureMonth(key);
     reviewYear = null;
+    reviewReturnMonth = null;
     state.activeMonth = key;
 }
 
 function openReview(year) {
+    const keys = yearMonthKeys(year);
+    if (!keys.length) return;
     reviewYear = year;
-    state.activeMonth = monthKey(year, 11);
+    state.activeMonth = keys[keys.length - 1];
+}
+
+// YTD button: open the report for the active cycle's year, or close it again
+function toggleYtdReport() {
+    if (reviewYear !== null) {
+        openMonth(reviewReturnMonth || state.activeMonth);
+    } else {
+        const from = state.activeMonth;
+        openReview(parseMonthKey(from).year);
+        reviewReturnMonth = from;
+    }
+    save();
+    renderAll();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // ---- Save (local + cloud) ----
@@ -602,7 +629,7 @@ function renderMonthSelect() {
         const opt = document.createElement('option');
         opt.value = entry.key;
         opt.textContent = entry.type === 'review'
-            ? `★ ${entry.year} // REVIEW`
+            ? `★ ${entry.year} // ${hasReview(entry.year) ? 'REVIEW' : 'YTD'}`
             : formatMonthLabel(entry.key);
         if (entry.key === current) opt.selected = true;
         sel.appendChild(opt);
@@ -654,11 +681,15 @@ function renderNotes() {
 }
 
 function renderAll() {
-    if (reviewYear !== null && !hasReview(reviewYear)) reviewYear = null;
+    if (reviewYear !== null && !yearMonthKeys(reviewYear).length) reviewYear = null;
     const inReview = reviewYear !== null;
     document.getElementById('monthView').hidden = inReview;
     document.getElementById('reviewView').hidden = !inReview;
-    document.getElementById('monthLabel').textContent = inReview ? 'ANNUAL REPORT' : 'ACTIVE CYCLE';
+    const isYtd = inReview && !hasReview(reviewYear);
+    document.getElementById('monthLabel').textContent = isYtd ? 'YEAR-TO-DATE REPORT' : inReview ? 'ANNUAL REPORT' : 'ACTIVE CYCLE';
+    document.getElementById('ytdBtnLabel').textContent = inReview ? 'BACK TO CYCLE' : 'YTD REPORT';
+    document.getElementById('ytdBtnIcon').textContent = inReview ? '◀' : '★';
+    document.getElementById('ytdBtn').classList.toggle('is-active', inReview);
 
     renderMonthSelect();
     renderVersionTag();
@@ -926,21 +957,25 @@ function renderReview(year) {
     const prev = prevHas ? computeYear(year - 1) : null;
     const t = r.totals;
     const view = document.getElementById('reviewView');
+    const isYtd = !hasReview(year);
+    const reportTitle = isYtd ? `${year} YEAR TO DATE` : `${year} YEAR IN REVIEW`;
+    const reportKind = isYtd ? 'YEAR-TO-DATE REPORT' : 'ANNUAL REPORT';
+    const periodWord = isYtd ? 'SO FAR' : 'FOR THE YEAR';
 
     if (!r.tracked.length) {
         view.innerHTML = `
             <section class="panel yr-hero">
-                <div class="yr-hero-eyebrow">ANNUAL REPORT // ${year}</div>
-                <h2 class="yr-hero-title">${year} YEAR IN REVIEW</h2>
+                <div class="yr-hero-eyebrow">${reportKind} // ${year}</div>
+                <h2 class="yr-hero-title">${reportTitle}</h2>
                 <p class="yr-empty">No actuals were logged for ${year} yet. Enter actual amounts in that year's cycles and this report fills itself in.</p>
             </section>`;
         return;
     }
 
     const budgetDiff = t.aE - t.pE;
-    let verdictCls = 'on', verdict = '◆ ON BUDGET FOR THE YEAR';
-    if (t.pE > 0 && budgetDiff > 0)      { verdictCls = 'over';  verdict = `▲ OVER BUDGET BY ${fmtUSD(budgetDiff)} FOR THE YEAR`; }
-    else if (t.pE > 0 && budgetDiff < 0) { verdictCls = 'under'; verdict = `▼ UNDER BUDGET BY ${fmtUSD(-budgetDiff)} FOR THE YEAR`; }
+    let verdictCls = 'on', verdict = `◆ ON BUDGET ${periodWord}`;
+    if (t.pE > 0 && budgetDiff > 0)      { verdictCls = 'over';  verdict = `▲ OVER BUDGET BY ${fmtUSD(budgetDiff)} ${periodWord}`; }
+    else if (t.pE > 0 && budgetDiff < 0) { verdictCls = 'under'; verdict = `▼ UNDER BUDGET BY ${fmtUSD(-budgetDiff)} ${periodWord}`; }
 
     const firstIdx = r.tracked[0].idx, lastIdx = r.tracked[r.tracked.length - 1].idx;
     const coverage = `${r.tracked.length} OF 12 CYCLES WITH ACTUALS · ${MONTH_SHORT[firstIdx]}–${MONTH_SHORT[lastIdx]}`;
@@ -1049,6 +1084,31 @@ function renderReview(year) {
 
     const ira = r.ira;
     const iraPct = Math.min(100, ira.pct || 0);
+
+    // Year-to-date pacing: extrapolate the per-cycle average over the full year
+    const monthsLeft = 11 - lastIdx;
+    const iraLeft = Math.max(0, ira.target - ira.contributed);
+    const pace = (total) => (total / r.tracked.length) * 12;
+    const paceTiles = [
+        { label: 'ON PACE TO SAVE', value: fmtUSD(pace(t.aS)), sub: t.pS > 0 ? `PLAN SO FAR ${fmtUSD(t.pS)}` : 'AT CURRENT MONTHLY AVERAGE' },
+        { label: 'ON PACE TO SPEND', value: fmtUSD(pace(t.aE)), sub: t.pE > 0 ? `BUDGET SO FAR ${fmtUSD(t.pE)}` : 'AT CURRENT MONTHLY AVERAGE' },
+        { label: 'PROJECTED YEAR-END NET', value: fmtSignedUSD(pace(t.net)), valueCls: pace(t.net) < 0 ? 'negative' : 'positive', sub: `${fmtSignedUSD(t.net)} SO FAR` },
+        { label: 'ROTH IRA NEEDED / MONTH', value: iraLeft <= 0 ? '◆ MAXED' : monthsLeft > 0 ? fmtUSD(iraLeft / monthsLeft) : fmtUSD(iraLeft),
+          sub: iraLeft <= 0 ? `${fmtUSD(ira.target)} TARGET HIT` : `${fmtUSD(iraLeft)} LEFT · ${monthsLeft} CYCLE${monthsLeft === 1 ? '' : 'S'} REMAINING` },
+    ];
+    const paceSection = isYtd ? `
+        <section class="panel yr-pace">
+            <div class="section-head"><h2>YEAR-END PACE // PROJECTION</h2>
+                <div class="section-totals">BASED ON ${r.tracked.length} LOGGED CYCLE${r.tracked.length === 1 ? '' : 'S'} · ${monthsLeft} LEFT IN ${year}</div>
+            </div>
+            <div class="yr-pace-grid">
+                ${paceTiles.map(p => `<div class="yr-record">
+                    <div class="yr-record-label">${p.label}</div>
+                    <div class="yr-record-value kpi-value ${p.valueCls || ''}">${p.value}</div>
+                    <div class="yr-record-detail">${p.sub}</div>
+                </div>`).join('')}
+            </div>
+        </section>` : '';
     const iraStatus = ira.contributed >= ira.target && ira.target > 0
         ? `<span class="diff-under">◆ MAXED OUT</span>`
         : `<span class="diff-over">${fmtUSD(Math.max(0, ira.target - ira.contributed))} LEFT UNFUNDED</span>`;
@@ -1056,12 +1116,12 @@ function renderReview(year) {
     view.innerHTML = `
         <section class="panel yr-hero">
             <div class="yr-hero-main">
-                <div class="yr-hero-eyebrow">ANNUAL REPORT // ${coverage}</div>
-                <h2 class="yr-hero-title">${year} YEAR IN REVIEW</h2>
+                <div class="yr-hero-eyebrow">${reportKind} // ${coverage}</div>
+                <h2 class="yr-hero-title">${reportTitle}</h2>
                 <div class="kpi-status ${verdictCls}">${verdict}</div>
             </div>
             <div class="yr-hero-net">
-                <div class="kpi-label">ACTUAL NET // FULL YEAR</div>
+                <div class="kpi-label">ACTUAL NET // ${isYtd ? 'YEAR TO DATE' : 'FULL YEAR'}</div>
                 <div class="kpi-value kpi-xl ${t.net < 0 ? 'negative' : 'positive'}">${fmtSignedUSD(t.net)}</div>
             </div>
         </section>
@@ -1075,6 +1135,7 @@ function renderReview(year) {
                 <div class="kpi-accent ${tile.accent}"></div>
             </div>`).join('')}
         </section>
+        ${paceSection}
 
         <section class="panel">
             <div class="section-head"><h2>MONTHLY TREND // SAVED VS SPENT</h2><div class="section-totals">HOVER A MONTH FOR DETAIL</div></div>
@@ -1110,7 +1171,7 @@ function renderReview(year) {
                 <div class="yr-cats">${catRows}</div>
             </section>
             <section class="panel">
-                <div class="section-head"><h2>ROTH IRA // ${year} RESULT</h2></div>
+                <div class="section-head"><h2>ROTH IRA // ${year} ${isYtd ? 'PROGRESS' : 'RESULT'}</h2></div>
                 <div class="ira-stats yr-ira-stats">
                     <div class="ira-stat"><div class="ira-stat-label">CONTRIBUTED</div><div class="ira-stat-value">${fmtUSD(ira.contributed)}</div></div>
                     <div class="ira-stat"><div class="ira-stat-label">TARGET</div><div class="ira-stat-value">${fmtUSD(ira.target)}</div></div>
@@ -1266,6 +1327,7 @@ function wireEvents() {
     document.getElementById('prevMonth').addEventListener('click', () => shiftMonth(-1));
     document.getElementById('nextMonth').addEventListener('click', () => shiftMonth(1));
     document.getElementById('newMonthBtn').addEventListener('click', addNewMonth);
+    document.getElementById('ytdBtn').addEventListener('click', toggleYtdReport);
     document.getElementById('syncBtn').addEventListener('click', openSyncModal);
     wireChartTips();
 

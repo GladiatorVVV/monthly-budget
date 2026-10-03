@@ -46,9 +46,14 @@
                 <select id="monthSelect" class="month-select"></select>
             </div>
             <button class="nav-btn" id="nextMonth" aria-label="Next month">▶</button>
-            <button class="btn btn-accent" id="newMonthBtn">
-                <span class="btn-icon">+</span> NEW CYCLE
-            </button>
+            <div class="month-actions">
+                <button class="btn btn-accent" id="newMonthBtn">
+                    <span class="btn-icon">+</span> NEW CYCLE
+                </button>
+                <button class="btn btn-ytd" id="ytdBtn" title="Year-to-date report for this cycle's year">
+                    <span class="btn-icon" id="ytdBtnIcon">★</span> <span id="ytdBtnLabel">YTD REPORT</span>
+                </button>
+            </div>
         </section>
 
         <div class="view-stack" id="monthView">
