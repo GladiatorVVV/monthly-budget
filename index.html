@@ -20,7 +20,15 @@
                 <div class="logo-mark">◈</div>
                 <div>
                     <h1>LEDGER</h1>
-                    <div class="subtitle">PERSONAL FINANCE TERMINAL // <span id="versionTag">v2026.4</span></div>
+                    <div class="subtitle-row">
+                        <div class="subtitle">PERSONAL FINANCE TERMINAL // <span id="versionTag">v2026.4</span></div>
+                        <div class="last-updated" id="lastUpdated">
+                            <span class="lu-dot"></span>
+                            <span class="lu-label">LAST UPDATED</span>
+                            <span class="lu-value" id="lastUpdatedValue">—</span>
+                            <span class="lu-ago" id="lastUpdatedAgo"></span>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="header-actions">
@@ -34,7 +42,7 @@
         <section class="month-bar panel">
             <button class="nav-btn" id="prevMonth" aria-label="Previous month">◀</button>
             <div class="month-display">
-                <div class="month-label">ACTIVE CYCLE</div>
+                <div class="month-label" id="monthLabel">ACTIVE CYCLE</div>
                 <select id="monthSelect" class="month-select"></select>
             </div>
             <button class="nav-btn" id="nextMonth" aria-label="Next month">▶</button>
@@ -43,6 +51,7 @@
             </button>
         </section>
 
+        <div class="view-stack" id="monthView">
         <section class="summary-grid">
             <div class="kpi panel">
                 <div class="kpi-label">PROJECTED INVESTMENTS/SAVINGS</div>
@@ -137,6 +146,9 @@
             </div>
             <textarea id="notesField" placeholder="Log notes for this cycle..."></textarea>
         </section>
+        </div>
+
+        <div class="view-stack" id="reviewView" hidden></div>
 
         <footer class="footer">
             <div class="status-line">
@@ -150,6 +162,7 @@
     </div>
 
     <div class="toast" id="toast"></div>
+    <div class="chart-tip" id="chartTip" role="tooltip"></div>
 
     <!-- Sync Setup Modal -->
     <div class="modal-overlay" id="syncOverlay" style="display:none">
