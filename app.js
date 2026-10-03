@@ -56,6 +56,9 @@ let syncConfig = null; // { pat, gistId }
 let syncDebounceTimer = null;
 let syncInFlight = false;
 
+// ---- View state ----
+let reviewYear = null; // year whose annual report is shown, or null for the monthly view
+
 // ---- Helpers ----
 function emptyMonth() {
     const data = {};
@@ -86,6 +89,45 @@ function formatMonthLabel(key) {
 function fmtUSD(n) {
     const sign = n < 0 ? '-' : '';
     return sign + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtSignedUSD(n) {
+    return (n > 0 ? '+' : '') + fmtUSD(n);
+}
+
+function fmtCompact(n) {
+    const a = Math.abs(n);
+    const sign = n < 0 ? '-' : '';
+    if (a >= 1e6) return `${sign}$${(a / 1e6).toFixed(a >= 1e7 ? 0 : 1)}M`;
+    if (a >= 1e3) return `${sign}$${(a / 1e3).toFixed(a >= 1e4 ? 0 : 1)}K`;
+    return `${sign}$${Math.round(a)}`;
+}
+
+function fmtPct(n, digits = 1) {
+    return Number.isFinite(n) ? `${n.toFixed(digits)}%` : '—';
+}
+
+function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+function fmtTimestamp(iso) {
+    const d = new Date(iso);
+    const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase();
+    const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+    return `${date} · ${time}`;
+}
+
+function fmtRelative(iso) {
+    const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (secs < 45) return 'JUST NOW';
+    const mins = Math.round(secs / 60);
+    if (mins < 60) return `${mins} MIN AGO`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return `${hrs} HR AGO`;
+    const days = Math.round(hrs / 24);
+    if (days < 30) return `${days} DAY${days === 1 ? '' : 'S'} AGO`;
+    return '';
 }
 
 // ---- Persistence (localStorage) ----
@@ -189,6 +231,8 @@ async function loadFromGist() {
         if (raw) {
             const parsed = JSON.parse(raw);
             state = migrate(parsed);
+            // Data saved before timestamps existed: fall back to the gist's own edit time
+            if (!state.lastUpdated && gist.updated_at) state.lastUpdated = gist.updated_at;
             saveLocal();
             renderAll();
         }
@@ -360,10 +404,43 @@ function sortedMonthKeys() {
     return Object.keys(state.months).sort();
 }
 
+// Navigation order: every month, with a year-in-review stop right after each December
+function navEntries() {
+    const entries = [];
+    sortedMonthKeys().forEach(k => {
+        entries.push({ type: 'month', key: k });
+        const { year, monthIdx } = parseMonthKey(k);
+        if (monthIdx === 11) entries.push({ type: 'review', year, key: `review:${year}` });
+    });
+    return entries;
+}
+
+function hasReview(year) {
+    return !!state.months[monthKey(year, 11)];
+}
+
+function openMonth(key) {
+    ensureMonth(key);
+    reviewYear = null;
+    state.activeMonth = key;
+}
+
+function openReview(year) {
+    reviewYear = year;
+    state.activeMonth = monthKey(year, 11);
+}
+
 // ---- Save (local + cloud) ----
 function save() {
     saveLocal();
     scheduleSyncSave();
+}
+
+// Save a change to budget data (not just navigation) and stamp it as the last update
+function commit() {
+    state.lastUpdated = new Date().toISOString();
+    save();
+    renderLastUpdated();
 }
 
 // ---- Calculations ----
@@ -504,9 +581,7 @@ function renderIraPanel() {
             <div class="ira-month-amount">${amount > 0 ? fmtUSD(amount) : '—'}</div>
         `;
         cell.addEventListener('click', () => {
-            const k = monthKey(year, i);
-            ensureMonth(k);
-            state.activeMonth = k;
+            openMonth(monthKey(year, i));
             save();
             renderAll();
         });
@@ -522,11 +597,14 @@ function renderMonthSelect() {
         ensureMonth(state.activeMonth);
         return renderMonthSelect();
     }
-    keys.forEach(k => {
+    const current = reviewYear !== null ? `review:${reviewYear}` : state.activeMonth;
+    navEntries().forEach(entry => {
         const opt = document.createElement('option');
-        opt.value = k;
-        opt.textContent = formatMonthLabel(k);
-        if (k === state.activeMonth) opt.selected = true;
+        opt.value = entry.key;
+        opt.textContent = entry.type === 'review'
+            ? `★ ${entry.year} // REVIEW`
+            : formatMonthLabel(entry.key);
+        if (entry.key === current) opt.selected = true;
         sel.appendChild(opt);
     });
 }
@@ -548,7 +626,27 @@ function renderYearSelect() {
 
 function renderVersionTag() {
     const { year, monthIdx } = parseMonthKey(state.activeMonth);
-    document.getElementById('versionTag').textContent = `v${year}.${monthIdx + 1}`;
+    document.getElementById('versionTag').textContent =
+        reviewYear !== null ? `v${reviewYear}.YR` : `v${year}.${monthIdx + 1}`;
+}
+
+function renderLastUpdated() {
+    const wrap = document.getElementById('lastUpdated');
+    const valueEl = document.getElementById('lastUpdatedValue');
+    const agoEl = document.getElementById('lastUpdatedAgo');
+    const iso = state.lastUpdated;
+    if (!iso || Number.isNaN(new Date(iso).getTime())) {
+        valueEl.textContent = 'NO EDITS LOGGED YET';
+        agoEl.textContent = '';
+        wrap.classList.add('is-empty');
+        wrap.removeAttribute('title');
+        return;
+    }
+    wrap.classList.remove('is-empty');
+    valueEl.textContent = fmtTimestamp(iso);
+    const ago = fmtRelative(iso);
+    agoEl.textContent = ago ? `(${ago})` : '';
+    wrap.title = new Date(iso).toString();
 }
 
 function renderNotes() {
@@ -556,39 +654,546 @@ function renderNotes() {
 }
 
 function renderAll() {
+    if (reviewYear !== null && !hasReview(reviewYear)) reviewYear = null;
+    const inReview = reviewYear !== null;
+    document.getElementById('monthView').hidden = inReview;
+    document.getElementById('reviewView').hidden = !inReview;
+    document.getElementById('monthLabel').textContent = inReview ? 'ANNUAL REPORT' : 'ACTIVE CYCLE';
+
     renderMonthSelect();
-    renderYearSelect();
     renderVersionTag();
+    renderLastUpdated();
+    if (inReview) {
+        renderReview(reviewYear);
+        return;
+    }
+    renderYearSelect();
     renderSummary();
     renderIraPanel();
     Object.keys(CATEGORIES).forEach(renderCategory);
     renderNotes();
 }
 
+// ---- Annual report: analytics ----
+function monthSums(m) {
+    const r = { cats: {}, items: {}, pS: 0, aS: 0, pE: 0, aE: 0 };
+    Object.entries(CATEGORIES).forEach(([catKey, cat]) => {
+        let p = 0, a = 0;
+        cat.items.forEach(item => {
+            const v = m?.[catKey]?.[item.id];
+            const ip = Number(v?.projected) || 0, ia = Number(v?.actual) || 0;
+            r.items[item.id] = { p: ip, a: ia };
+            p += ip; a += ia;
+        });
+        r.cats[catKey] = { p, a };
+        if (cat.type === 'savings') { r.pS += p; r.aS += a; }
+        else                        { r.pE += p; r.aE += a; }
+    });
+    r.net = r.aS - r.aE;
+    r.tracked = r.aS > 0 || r.aE > 0;
+    r.budgetEvaluated = r.pE > 0 && r.aE > 0;
+    r.underBudget = r.budgetEvaluated && r.aE <= r.pE;
+    r.savingsEvaluated = r.pS > 0 && r.tracked;
+    r.savingsHit = r.savingsEvaluated && r.aS >= r.pS;
+    return r;
+}
+
+function stats(values) {
+    const n = values.length;
+    if (!n) return { n: 0, mean: 0, sd: 0, cv: NaN, median: 0, min: 0, max: 0 };
+    const mean = values.reduce((s, v) => s + v, 0) / n;
+    const sd = Math.sqrt(values.reduce((s, v) => s + (v - mean) ** 2, 0) / n);
+    const sorted = [...values].sort((a, b) => a - b);
+    const median = n % 2 ? sorted[(n - 1) / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2;
+    return { n, mean, sd, cv: mean ? (sd / mean) * 100 : NaN, median, min: sorted[0], max: sorted[n - 1] };
+}
+
+function pickBy(list, score) {
+    return list.reduce((best, x) => (best === null || score(x) > score(best) ? x : best), null);
+}
+
+function computeYear(year) {
+    const months = [];
+    for (let i = 0; i < 12; i++) {
+        const m = state.months[monthKey(year, i)];
+        months.push({ ...monthSums(m), idx: i, exists: !!m });
+    }
+    const tracked = months.filter(m => m.tracked);
+    const total = (field) => months.reduce((s, m) => s + m[field], 0);
+    const t = { pS: total('pS'), aS: total('aS'), pE: total('pE'), aE: total('aE') };
+    t.net = t.aS - t.aE;
+
+    const cats = {};
+    Object.entries(CATEGORIES).forEach(([catKey, cat]) => {
+        const p = months.reduce((s, m) => s + m.cats[catKey].p, 0);
+        const a = months.reduce((s, m) => s + m.cats[catKey].a, 0);
+        cats[catKey] = { p, a, variance: a - p, type: cat.type, title: cat.title };
+    });
+
+    const items = [];
+    Object.entries(CATEGORIES).forEach(([catKey, cat]) => {
+        cat.items.forEach(item => {
+            const series = months.map(m => m.items[item.id].a);
+            const projSeries = months.map(m => m.items[item.id].p);
+            const p = projSeries.reduce((s, v) => s + v, 0);
+            const a = series.reduce((s, v) => s + v, 0);
+            const active = series.filter(v => v > 0);
+            const st = stats(active);
+            const peakIdx = a > 0 ? series.indexOf(Math.max(...series)) : -1;
+            const catTotal = cats[catKey].a;
+            const typeTotal = cat.type === 'savings' ? t.aS : t.aE;
+            items.push({
+                id: item.id, name: item.name, catKey, type: cat.type,
+                series, p, a, variance: a - p,
+                variancePct: p > 0 ? ((a - p) / p) * 100 : NaN,
+                activeMonths: active.length,
+                avg: st.mean, median: st.median, cv: st.cv,
+                peakIdx, peak: peakIdx >= 0 ? series[peakIdx] : 0,
+                catShare: catTotal > 0 ? (a / catTotal) * 100 : 0,
+                typeShare: typeTotal > 0 ? (a / typeTotal) * 100 : 0,
+            });
+        });
+    });
+
+    const quarters = [0, 1, 2, 3].map(q => {
+        const qs = months.slice(q * 3, q * 3 + 3);
+        const sum = (f) => qs.reduce((s, m) => s + m[f], 0);
+        const r = { q: q + 1, pS: sum('pS'), aS: sum('aS'), pE: sum('pE'), aE: sum('aE'), tracked: qs.filter(m => m.tracked).length };
+        r.net = r.aS - r.aE;
+        return r;
+    });
+
+    const budgetMonths = months.filter(m => m.budgetEvaluated);
+    const savingsMonths = months.filter(m => m.savingsEvaluated);
+
+    // Longest run of consecutive months at or under budget
+    let streak = 0, bestStreak = 0, streakEnd = -1;
+    months.forEach(m => {
+        streak = m.underBudget ? streak + 1 : 0;
+        if (streak > bestStreak) { bestStreak = streak; streakEnd = m.idx; }
+    });
+
+    const spendMonths = tracked.filter(m => m.aE > 0);
+    const saveMonths = tracked.filter(m => m.aS > 0);
+    const expenseItems = items.filter(i => i.type === 'expense');
+    const savingsItems = items.filter(i => i.type === 'savings');
+
+    const iraTarget = getIraTarget(year);
+    const iraContributed = iraYearTotal(year);
+
+    return {
+        year, months, tracked, totals: t, cats, items, quarters,
+        expenseStats: stats(spendMonths.map(m => m.aE)),
+        savingsStats: stats(saveMonths.map(m => m.aS)),
+        netStats: stats(tracked.map(m => m.net)),
+        saveRatio: t.aS + t.aE > 0 ? (t.aS / (t.aS + t.aE)) * 100 : NaN,
+        budget: { evaluated: budgetMonths.length, under: budgetMonths.filter(m => m.underBudget).length },
+        savingsGoal: { evaluated: savingsMonths.length, hit: savingsMonths.filter(m => m.savingsHit).length },
+        streak: { length: bestStreak, end: streakEnd },
+        records: {
+            bestNet: pickBy(tracked, m => m.net),
+            worstNet: pickBy(tracked, m => -m.net),
+            peakSpend: pickBy(spendMonths, m => m.aE),
+            lowSpend: pickBy(spendMonths, m => -m.aE),
+            peakSave: pickBy(saveMonths, m => m.aS),
+            biggestOverrun: pickBy(expenseItems.filter(i => i.variance > 0), i => i.variance),
+            biggestUnderrun: pickBy(expenseItems.filter(i => i.variance < 0), i => -i.variance),
+            savingsBeat: pickBy(savingsItems.filter(i => i.variance > 0), i => i.variance),
+            savingsMiss: pickBy(savingsItems.filter(i => i.variance < 0), i => -i.variance),
+            steadiest: pickBy(expenseItems.filter(i => i.activeMonths >= 3), i => -i.cv),
+            mostVolatile: pickBy(expenseItems.filter(i => i.activeMonths >= 3), i => i.cv),
+            topExpense: pickBy(expenseItems.filter(i => i.a > 0), i => i.a),
+            topSavings: pickBy(savingsItems.filter(i => i.a > 0), i => i.a),
+        },
+        ira: {
+            target: iraTarget,
+            contributed: iraContributed,
+            pct: iraTarget > 0 ? (iraContributed / iraTarget) * 100 : NaN,
+            monthsFunded: months.filter((m, i) => iraMonthContribution(year, i) > 0).length,
+        },
+    };
+}
+
+// ---- Annual report: rendering ----
+// Year-over-year comparison. When the two years logged a different number of cycles,
+// compare per-cycle averages so a partial year doesn't skew the result.
+function deltaLine(field, r, prev, goodWhenUp, asDollars = false) {
+    if (!prev || !prev.tracked.length) return '';
+    const sameCoverage = r.tracked.length === prev.tracked.length;
+    const cur = sameCoverage ? r.totals[field] : r.totals[field] / r.tracked.length;
+    const old = sameCoverage ? prev.totals[field] : prev.totals[field] / prev.tracked.length;
+    const basis = sameCoverage ? `VS ${prev.year}` : `AVG/CYCLE VS ${prev.year}`;
+    const diff = cur - old;
+    const arrow = diff > 0 ? '▲' : diff < 0 ? '▼' : '◆';
+    const cls = diff === 0 ? 'yoy-flat' : ((diff > 0) === goodWhenUp ? 'yoy-good' : 'yoy-bad');
+    const amount = asDollars || !old ? fmtUSD(Math.abs(diff)) : fmtPct(Math.abs((diff / Math.abs(old)) * 100));
+    return `<div class="yr-tile-yoy ${cls}">${arrow} ${amount} ${basis}</div>`;
+}
+
+function varianceClass(variance, type) {
+    if (!variance) return 'diff-neutral';
+    const good = type === 'savings' ? variance > 0 : variance < 0;
+    return good ? 'diff-under' : 'diff-over';
+}
+
+function niceMax(v) {
+    if (v <= 0) return 1;
+    const mag = 10 ** Math.floor(Math.log10(v));
+    const step = [1, 2, 2.5, 5, 10].find(s => s * mag >= v);
+    return step * mag;
+}
+
+function tipAttr(html) {
+    return `data-tip="${escapeHtml(html)}" tabindex="0"`;
+}
+
+function renderMonthlyChart(r) {
+    const max = niceMax(Math.max(...r.months.map(m => Math.max(m.aS, m.aE)), 0));
+    const ticks = [1, 0.75, 0.5, 0.25, 0].map(f => max * f);
+    const cols = r.months.map(m => {
+        const tip = `<b>${MONTH_NAMES[m.idx].toUpperCase()} ${r.year}</b>`
+            + `<div><i class="sw sw-save"></i>SAVED ${fmtUSD(m.aS)} <em>/ plan ${fmtUSD(m.pS)}</em></div>`
+            + `<div><i class="sw sw-spend"></i>SPENT ${fmtUSD(m.aE)} <em>/ budget ${fmtUSD(m.pE)}</em></div>`
+            + `<div>NET ${fmtSignedUSD(m.net)}</div>`;
+        return `<div class="yr-col${m.tracked ? '' : ' is-empty'}" ${tipAttr(tip)}>
+            <div class="yr-bar bar-save" style="height:${(m.aS / max) * 100}%"></div>
+            <div class="yr-bar bar-spend" style="height:${(m.aE / max) * 100}%"></div>
+        </div>`;
+    }).join('');
+    return `
+        <div class="yr-legend">
+            <span><i class="sw sw-save"></i>INVESTED / SAVED</span>
+            <span><i class="sw sw-spend"></i>EXPENSES</span>
+        </div>
+        <div class="yr-chart">
+            <div class="yr-yaxis">${ticks.map(v => `<span>${fmtCompact(v)}</span>`).join('')}</div>
+            <div class="yr-plot">
+                <div class="yr-grid">${ticks.map(() => '<i></i>').join('')}</div>
+                <div class="yr-cols">${cols}</div>
+            </div>
+        </div>
+        <div class="yr-xaxis">${MONTH_SHORT.map(s => `<span>${s}</span>`).join('')}</div>`;
+}
+
+function renderNetChart(r) {
+    const nets = r.months.map(m => m.net);
+    const hi = Math.max(0, ...nets), lo = Math.min(0, ...nets);
+    const span = (hi - lo) || 1;
+    const zeroPct = (hi / span) * 100; // distance of the zero line from the top
+    const cols = r.months.map(m => {
+        const h = (Math.abs(m.net) / span) * 100;
+        const pos = m.net >= 0
+            ? `bottom:${100 - zeroPct}%;height:${h}%`
+            : `top:${zeroPct}%;height:${h}%`;
+        const tip = `<b>${MONTH_NAMES[m.idx].toUpperCase()} ${r.year}</b><div>NET ${fmtSignedUSD(m.net)}</div>`;
+        return `<div class="yr-col net-col${m.tracked ? '' : ' is-empty'}" ${tipAttr(tip)}>
+            ${m.tracked ? `<div class="net-bar ${m.net >= 0 ? 'net-pos' : 'net-neg'}" style="${pos}"></div>` : ''}
+        </div>`;
+    }).join('');
+    return `
+        <div class="yr-chart yr-chart-net">
+            <div class="yr-yaxis net-yaxis">
+                <span style="top:0">${fmtCompact(hi)}</span>
+                ${lo < 0 && hi > 0 ? `<span style="top:${zeroPct}%">$0</span>` : ''}
+                <span style="top:100%">${fmtCompact(lo)}</span>
+            </div>
+            <div class="yr-plot">
+                <div class="net-zero" style="top:${zeroPct}%"></div>
+                <div class="yr-cols">${cols}</div>
+            </div>
+        </div>
+        <div class="yr-xaxis">${MONTH_SHORT.map(s => `<span>${s}</span>`).join('')}</div>`;
+}
+
+function sparkline(series) {
+    const max = Math.max(...series, 0) || 1;
+    return `<div class="spark">${series.map((v, i) =>
+        `<i class="${v > 0 ? '' : 'zero'}" style="height:${v > 0 ? Math.max(8, (v / max) * 100) : 4}%" title="${MONTH_SHORT[i]}: ${fmtUSD(v)}"></i>`
+    ).join('')}</div>`;
+}
+
+function recordCard(label, value, detail, cls = '') {
+    return `<div class="yr-record">
+        <div class="yr-record-label">${label}</div>
+        <div class="yr-record-value ${cls}">${value}</div>
+        <div class="yr-record-detail">${detail}</div>
+    </div>`;
+}
+
+function renderReview(year) {
+    const r = computeYear(year);
+    const prevHas = Object.keys(state.months).some(k => parseMonthKey(k).year === year - 1);
+    const prev = prevHas ? computeYear(year - 1) : null;
+    const t = r.totals;
+    const view = document.getElementById('reviewView');
+
+    if (!r.tracked.length) {
+        view.innerHTML = `
+            <section class="panel yr-hero">
+                <div class="yr-hero-eyebrow">ANNUAL REPORT // ${year}</div>
+                <h2 class="yr-hero-title">${year} YEAR IN REVIEW</h2>
+                <p class="yr-empty">No actuals were logged for ${year} yet. Enter actual amounts in that year's cycles and this report fills itself in.</p>
+            </section>`;
+        return;
+    }
+
+    const budgetDiff = t.aE - t.pE;
+    let verdictCls = 'on', verdict = '◆ ON BUDGET FOR THE YEAR';
+    if (t.pE > 0 && budgetDiff > 0)      { verdictCls = 'over';  verdict = `▲ OVER BUDGET BY ${fmtUSD(budgetDiff)} FOR THE YEAR`; }
+    else if (t.pE > 0 && budgetDiff < 0) { verdictCls = 'under'; verdict = `▼ UNDER BUDGET BY ${fmtUSD(-budgetDiff)} FOR THE YEAR`; }
+
+    const firstIdx = r.tracked[0].idx, lastIdx = r.tracked[r.tracked.length - 1].idx;
+    const coverage = `${r.tracked.length} OF 12 CYCLES WITH ACTUALS · ${MONTH_SHORT[firstIdx]}–${MONTH_SHORT[lastIdx]}`;
+
+    const savePlanPct = t.pS > 0 ? (t.aS / t.pS) * 100 : NaN;
+    const spendPlanPct = t.pE > 0 ? (t.aE / t.pE) * 100 : NaN;
+
+    const tiles = [
+        { label: 'TOTAL INVESTED / SAVED', value: fmtUSD(t.aS), sub: `${fmtPct(savePlanPct)} OF ${fmtUSD(t.pS)} PLANNED`, accent: 'accent-green', yoy: deltaLine('aS', r, prev, true) },
+        { label: 'TOTAL EXPENSES', value: fmtUSD(t.aE), sub: `${fmtPct(spendPlanPct)} OF ${fmtUSD(t.pE)} BUDGETED`, accent: 'accent-red', yoy: deltaLine('aE', r, prev, false) },
+        { label: 'NET (SAVED − SPENT)', value: fmtSignedUSD(t.net), valueCls: t.net < 0 ? 'negative' : 'positive', sub: `AVG ${fmtSignedUSD(r.netStats.mean)} / CYCLE`, accent: 'accent-cyan', yoy: deltaLine('net', r, prev, true, true) },
+        { label: 'SHARE OF OUTFLOW SAVED', value: fmtPct(r.saveRatio), sub: `${fmtCompact(t.aS)} OF ${fmtCompact(t.aS + t.aE)} TOTAL OUTFLOW`, accent: 'accent-magenta', yoy: '' },
+        { label: 'AVG MONTHLY SAVED', value: fmtUSD(r.savingsStats.mean), sub: `MEDIAN ${fmtUSD(r.savingsStats.median)}`, accent: 'accent-green', yoy: '' },
+        { label: 'AVG MONTHLY SPEND', value: fmtUSD(r.expenseStats.mean), sub: `MEDIAN ${fmtUSD(r.expenseStats.median)} · ±${fmtUSD(r.expenseStats.sd)}`, accent: 'accent-red', yoy: '' },
+        { label: 'BUDGET HIT RATE', value: r.budget.evaluated ? fmtPct((r.budget.under / r.budget.evaluated) * 100, 0) : '—', sub: `${r.budget.under} OF ${r.budget.evaluated} CYCLES AT/UNDER BUDGET`, accent: 'accent-cyan', yoy: '' },
+        { label: 'SAVINGS GOAL HIT RATE', value: r.savingsGoal.evaluated ? fmtPct((r.savingsGoal.hit / r.savingsGoal.evaluated) * 100, 0) : '—', sub: `${r.savingsGoal.hit} OF ${r.savingsGoal.evaluated} CYCLES MET PLAN`, accent: 'accent-magenta', yoy: '' },
+    ];
+
+    const quarterRows = r.quarters.map(q => {
+        const bv = q.aE - q.pE;
+        return `<tr${q.tracked ? '' : ' class="is-empty"'}>
+            <td class="yr-td-name">Q${q.q} <span class="yr-muted">${MONTH_SHORT[(q.q - 1) * 3]}–${MONTH_SHORT[(q.q - 1) * 3 + 2]}</span></td>
+            <td>${fmtUSD(q.aS)}</td>
+            <td>${fmtUSD(q.aE)}</td>
+            <td class="${q.net < 0 ? 'diff-over' : q.net > 0 ? 'diff-under' : ''}">${fmtSignedUSD(q.net)}</td>
+            <td class="${varianceClass(bv, 'expense')}">${q.pE > 0 ? fmtSignedUSD(bv) : '—'}</td>
+            <td>${q.tracked}/3</td>
+        </tr>`;
+    }).join('');
+
+    const halves = [[0, 1], [2, 3]].map(([a, b]) => {
+        const qa = r.quarters[a], qb = r.quarters[b];
+        return { aS: qa.aS + qb.aS, aE: qa.aE + qb.aE };
+    });
+
+    const rec = r.records;
+    const mName = (m) => `${MONTH_NAMES[m.idx].toUpperCase()}`;
+    const records = [
+        rec.bestNet && recordCard('BEST CYCLE (NET)', mName(rec.bestNet), fmtSignedUSD(rec.bestNet.net), 'diff-under'),
+        rec.worstNet && recordCard('TOUGHEST CYCLE (NET)', mName(rec.worstNet), fmtSignedUSD(rec.worstNet.net), 'diff-over'),
+        rec.peakSave && recordCard('PEAK SAVINGS MONTH', mName(rec.peakSave), fmtUSD(rec.peakSave.aS)),
+        rec.peakSpend && recordCard('PEAK SPENDING MONTH', mName(rec.peakSpend), fmtUSD(rec.peakSpend.aE)),
+        rec.lowSpend && recordCard('LEANEST SPENDING MONTH', mName(rec.lowSpend), fmtUSD(rec.lowSpend.aE)),
+        recordCard('LONGEST UNDER-BUDGET STREAK', `${r.streak.length} CYCLE${r.streak.length === 1 ? '' : 'S'}`,
+            r.streak.length ? `${MONTH_SHORT[r.streak.end - r.streak.length + 1]}–${MONTH_SHORT[r.streak.end]}` : 'NO CYCLE CAME IN UNDER BUDGET'),
+        rec.topExpense && recordCard('LARGEST EXPENSE LINE', rec.topExpense.name.toUpperCase(), `${fmtUSD(rec.topExpense.a)} · ${fmtPct(rec.topExpense.typeShare)} OF SPEND`),
+        rec.topSavings && recordCard('LARGEST SAVINGS LINE', rec.topSavings.name.toUpperCase(), `${fmtUSD(rec.topSavings.a)} · ${fmtPct(rec.topSavings.typeShare)} OF SAVED`),
+        rec.biggestOverrun && recordCard('BIGGEST OVERRUN', rec.biggestOverrun.name.toUpperCase(), `${fmtSignedUSD(rec.biggestOverrun.variance)} OVER PLAN`, 'diff-over'),
+        rec.biggestUnderrun && recordCard('BIGGEST UNDERSPEND', rec.biggestUnderrun.name.toUpperCase(), `${fmtUSD(-rec.biggestUnderrun.variance)} UNDER PLAN`, 'diff-under'),
+        rec.savingsBeat && recordCard('SAVINGS OVERACHIEVER', rec.savingsBeat.name.toUpperCase(), `${fmtSignedUSD(rec.savingsBeat.variance)} ABOVE PLAN`, 'diff-under'),
+        rec.savingsMiss && recordCard('SAVINGS SHORTFALL', rec.savingsMiss.name.toUpperCase(), `${fmtUSD(-rec.savingsMiss.variance)} BELOW PLAN`, 'diff-over'),
+        rec.steadiest && recordCard('STEADIEST EXPENSE', rec.steadiest.name.toUpperCase(), `±${fmtPct(rec.steadiest.cv, 0)} MONTH-TO-MONTH SWING`),
+        rec.mostVolatile && rec.mostVolatile !== rec.steadiest && recordCard('MOST VOLATILE EXPENSE', rec.mostVolatile.name.toUpperCase(), `±${fmtPct(rec.mostVolatile.cv, 0)} MONTH-TO-MONTH SWING`),
+    ].filter(Boolean).join('');
+
+    const catRows = Object.entries(r.cats).map(([catKey, c]) => {
+        const pct = c.p > 0 ? (c.a / c.p) * 100 : NaN;
+        const typeTotal = c.type === 'savings' ? t.aS : t.aE;
+        return `<div class="yr-cat">
+            <div class="yr-cat-head">
+                <span class="yr-cat-name">${c.title}</span>
+                <span class="yr-cat-amt">${fmtUSD(c.a)} <span class="yr-muted">/ ${fmtUSD(c.p)}</span></span>
+            </div>
+            <div class="yr-meter ${c.type === 'savings' ? 'meter-save' : 'meter-spend'}"><i style="width:${Math.min(100, pct || 0)}%"></i></div>
+            <div class="yr-cat-foot">
+                <span>${fmtPct(pct)} OF PLAN</span>
+                <span class="${varianceClass(c.variance, c.type)}">${fmtSignedUSD(c.variance)} VS PLAN</span>
+                <span>${fmtPct(typeTotal > 0 ? (c.a / typeTotal) * 100 : NaN)} OF ${c.type === 'savings' ? 'SAVED' : 'SPEND'}</span>
+            </div>
+        </div>`;
+    }).join('');
+
+    const mixList = (type) => r.items
+        .filter(i => i.type === type && i.a > 0)
+        .sort((a, b) => b.a - a.a)
+        .map(i => `<div class="yr-mix-row" ${tipAttr(`<b>${escapeHtml(i.name.toUpperCase())}</b><div>${fmtUSD(i.a)} · ${fmtPct(i.typeShare)}</div>`)}>
+            <span class="yr-mix-name">${escapeHtml(i.name)}</span>
+            <span class="yr-mix-track"><i class="${type === 'savings' ? 'bar-save' : 'bar-spend'}" style="width:${i.typeShare}%"></i></span>
+            <span class="yr-mix-val">${fmtPct(i.typeShare)}</span>
+        </div>`).join('') || '<div class="yr-muted">NO ACTUALS LOGGED</div>';
+
+    const ledgerRows = Object.entries(CATEGORIES).map(([catKey, cat]) => {
+        const rows = r.items.filter(i => i.catKey === catKey).map(i => `<tr${i.a || i.p ? '' : ' class="is-empty"'}>
+            <td class="yr-td-name">${escapeHtml(i.name)}</td>
+            <td>${fmtUSD(i.p)}</td>
+            <td>${fmtUSD(i.a)}</td>
+            <td class="${varianceClass(i.variance, i.type)}">${i.p || i.a ? fmtSignedUSD(i.variance) : '—'}</td>
+            <td class="${varianceClass(i.variance, i.type)}">${Number.isFinite(i.variancePct) ? (i.variancePct > 0 ? '+' : '') + fmtPct(i.variancePct) : '—'}</td>
+            <td>${i.activeMonths ? fmtUSD(i.avg) : '—'}</td>
+            <td>${i.peakIdx >= 0 ? `${fmtUSD(i.peak)} <span class="yr-muted">${MONTH_SHORT[i.peakIdx]}</span>` : '—'}</td>
+            <td>${i.activeMonths}/12</td>
+            <td>${fmtPct(i.catShare)}</td>
+            <td>${sparkline(i.series)}</td>
+        </tr>`).join('');
+        const c = r.cats[catKey];
+        return `<tr class="yr-group"><td colspan="10">${cat.title}</td></tr>${rows}
+            <tr class="yr-subtotal">
+                <td class="yr-td-name">SUBTOTAL</td>
+                <td>${fmtUSD(c.p)}</td>
+                <td>${fmtUSD(c.a)}</td>
+                <td class="${varianceClass(c.variance, c.type)}">${fmtSignedUSD(c.variance)}</td>
+                <td class="${varianceClass(c.variance, c.type)}">${c.p > 0 ? (c.variance > 0 ? '+' : '') + fmtPct((c.variance / c.p) * 100) : '—'}</td>
+                <td colspan="5"></td>
+            </tr>`;
+    }).join('');
+
+    const ira = r.ira;
+    const iraPct = Math.min(100, ira.pct || 0);
+    const iraStatus = ira.contributed >= ira.target && ira.target > 0
+        ? `<span class="diff-under">◆ MAXED OUT</span>`
+        : `<span class="diff-over">${fmtUSD(Math.max(0, ira.target - ira.contributed))} LEFT UNFUNDED</span>`;
+
+    view.innerHTML = `
+        <section class="panel yr-hero">
+            <div class="yr-hero-main">
+                <div class="yr-hero-eyebrow">ANNUAL REPORT // ${coverage}</div>
+                <h2 class="yr-hero-title">${year} YEAR IN REVIEW</h2>
+                <div class="kpi-status ${verdictCls}">${verdict}</div>
+            </div>
+            <div class="yr-hero-net">
+                <div class="kpi-label">ACTUAL NET // FULL YEAR</div>
+                <div class="kpi-value kpi-xl ${t.net < 0 ? 'negative' : 'positive'}">${fmtSignedUSD(t.net)}</div>
+            </div>
+        </section>
+
+        <section class="yr-tiles">
+            ${tiles.map(tile => `<div class="kpi panel">
+                <div class="kpi-label">${tile.label}</div>
+                <div class="kpi-value ${tile.valueCls || ''}">${tile.value}</div>
+                <div class="yr-tile-sub">${tile.sub}</div>
+                ${tile.yoy || ''}
+                <div class="kpi-accent ${tile.accent}"></div>
+            </div>`).join('')}
+        </section>
+
+        <section class="panel">
+            <div class="section-head"><h2>MONTHLY TREND // SAVED VS SPENT</h2><div class="section-totals">HOVER A MONTH FOR DETAIL</div></div>
+            ${renderMonthlyChart(r)}
+        </section>
+
+        <div class="yr-two">
+            <section class="panel">
+                <div class="section-head"><h2>NET BY CYCLE</h2><div class="section-totals">SAVED − SPENT</div></div>
+                ${renderNetChart(r)}
+            </section>
+            <section class="panel">
+                <div class="section-head"><h2>QUARTERLY BREAKDOWN</h2>
+                    <div class="section-totals">H1 NET ${fmtSignedUSD(halves[0].aS - halves[0].aE)} // H2 NET ${fmtSignedUSD(halves[1].aS - halves[1].aE)}</div>
+                </div>
+                <div class="yr-table-wrap">
+                    <table class="yr-table">
+                        <thead><tr><th>QTR</th><th>SAVED</th><th>SPENT</th><th>NET</th><th>VS BUDGET</th><th>LOGGED</th></tr></thead>
+                        <tbody>${quarterRows}</tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <section class="panel">
+            <div class="section-head"><h2>RECORDS // HIGHLIGHTS</h2></div>
+            <div class="yr-records">${records}</div>
+        </section>
+
+        <div class="yr-two">
+            <section class="panel">
+                <div class="section-head"><h2>CATEGORY PERFORMANCE</h2><div class="section-totals">ACTUAL / PLANNED</div></div>
+                <div class="yr-cats">${catRows}</div>
+            </section>
+            <section class="panel">
+                <div class="section-head"><h2>ROTH IRA // ${year} RESULT</h2></div>
+                <div class="ira-stats yr-ira-stats">
+                    <div class="ira-stat"><div class="ira-stat-label">CONTRIBUTED</div><div class="ira-stat-value">${fmtUSD(ira.contributed)}</div></div>
+                    <div class="ira-stat"><div class="ira-stat-label">TARGET</div><div class="ira-stat-value">${fmtUSD(ira.target)}</div></div>
+                    <div class="ira-stat"><div class="ira-stat-label">PROGRESS</div><div class="ira-stat-value">${fmtPct(ira.pct)}</div></div>
+                    <div class="ira-stat"><div class="ira-stat-label">MONTHS FUNDED</div><div class="ira-stat-value">${ira.monthsFunded}/12</div></div>
+                </div>
+                <div class="progress-track"><div class="progress-fill" style="width:${iraPct}%"></div></div>
+                <div class="yr-ira-status">${iraStatus}</div>
+            </section>
+        </div>
+
+        <div class="yr-two">
+            <section class="panel">
+                <div class="section-head"><h2>SPENDING MIX</h2><div class="section-totals">${fmtUSD(t.aE)} TOTAL</div></div>
+                <div class="yr-mix">${mixList('expense')}</div>
+            </section>
+            <section class="panel">
+                <div class="section-head"><h2>SAVINGS ALLOCATION</h2><div class="section-totals">${fmtUSD(t.aS)} TOTAL</div></div>
+                <div class="yr-mix">${mixList('savings')}</div>
+            </section>
+        </div>
+
+        <section class="panel">
+            <div class="section-head"><h2>LINE-ITEM LEDGER // ALL ITEMS</h2><div class="section-totals">VARIANCE = ACTUAL − PLANNED</div></div>
+            <div class="yr-table-wrap">
+                <table class="yr-table yr-ledger">
+                    <thead><tr>
+                        <th>ITEM</th><th>PLANNED</th><th>ACTUAL</th><th>VARIANCE</th><th>VAR %</th>
+                        <th>AVG / ACTIVE MO</th><th>PEAK</th><th>ACTIVE</th><th>% OF CAT</th><th>JAN → DEC</th>
+                    </tr></thead>
+                    <tbody>${ledgerRows}</tbody>
+                </table>
+            </div>
+        </section>`;
+}
+
+// ---- Chart tooltip ----
+function wireChartTips() {
+    const tip = document.getElementById('chartTip');
+    const view = document.getElementById('reviewView');
+    const show = (target, x, y) => {
+        tip.innerHTML = target.dataset.tip;
+        tip.classList.add('show');
+        const pad = 12;
+        const w = tip.offsetWidth, h = tip.offsetHeight;
+        let left = x + pad, top = y - h - pad;
+        if (left + w > window.innerWidth - 8) left = x - w - pad;
+        if (left < 8) left = 8;
+        if (top < 8) top = y + pad;
+        tip.style.left = `${left}px`;
+        tip.style.top = `${top}px`;
+    };
+    const hide = () => tip.classList.remove('show');
+    view.addEventListener('pointermove', (e) => {
+        const target = e.target.closest('[data-tip]');
+        if (target) show(target, e.clientX, e.clientY); else hide();
+    });
+    view.addEventListener('pointerleave', hide);
+    view.addEventListener('focusin', (e) => {
+        const target = e.target.closest('[data-tip]');
+        if (!target) return;
+        const r = target.getBoundingClientRect();
+        show(target, r.left + r.width / 2, r.top);
+    });
+    view.addEventListener('focusout', hide);
+    window.addEventListener('scroll', hide, { passive: true });
+}
+
 // ---- Month navigation ----
 function shiftMonth(delta) {
-    const keys = sortedMonthKeys();
-    const idx = keys.indexOf(state.activeMonth);
-    if (delta > 0) {
-        if (idx < keys.length - 1) {
-            state.activeMonth = keys[idx + 1];
-        } else {
-            let { year, monthIdx } = parseMonthKey(state.activeMonth);
-            if (++monthIdx > 11) { monthIdx = 0; year++; }
-            const nk = monthKey(year, monthIdx);
-            ensureMonth(nk);
-            state.activeMonth = nk;
-        }
+    const entries = navEntries();
+    const current = reviewYear !== null ? `review:${reviewYear}` : state.activeMonth;
+    const idx = entries.findIndex(e => e.key === current);
+    const target = entries[idx + delta];
+    if (target) {
+        if (target.type === 'review') openReview(target.year);
+        else openMonth(target.key);
     } else {
-        if (idx > 0) {
-            state.activeMonth = keys[idx - 1];
-        } else {
-            let { year, monthIdx } = parseMonthKey(state.activeMonth);
-            if (--monthIdx < 0) { monthIdx = 11; year--; }
-            const nk = monthKey(year, monthIdx);
-            ensureMonth(nk);
-            state.activeMonth = nk;
-        }
+        // Past either end of the list: create the adjacent month
+        let { year, monthIdx } = parseMonthKey(state.activeMonth);
+        if (delta > 0 && ++monthIdx > 11) { monthIdx = 0; year++; }
+        if (delta < 0 && --monthIdx < 0)  { monthIdx = 11; year--; }
+        openMonth(monthKey(year, monthIdx));
     }
     save();
     renderAll();
@@ -600,9 +1205,8 @@ function addNewMonth() {
     let { year, monthIdx } = parseMonthKey(last);
     if (++monthIdx > 11) { monthIdx = 0; year++; }
     const nk = monthKey(year, monthIdx);
-    ensureMonth(nk);
-    state.activeMonth = nk;
-    save();
+    openMonth(nk);
+    commit();
     renderAll();
     showToast(`NEW CYCLE CREATED // ${formatMonthLabel(nk)}`);
 }
@@ -663,9 +1267,12 @@ function wireEvents() {
     document.getElementById('nextMonth').addEventListener('click', () => shiftMonth(1));
     document.getElementById('newMonthBtn').addEventListener('click', addNewMonth);
     document.getElementById('syncBtn').addEventListener('click', openSyncModal);
+    wireChartTips();
 
     document.getElementById('monthSelect').addEventListener('change', (e) => {
-        state.activeMonth = e.target.value;
+        const val = e.target.value;
+        if (val.startsWith('review:')) openReview(Number(val.slice(7)));
+        else openMonth(val);
         save();
         renderAll();
     });
@@ -674,7 +1281,7 @@ function wireEvents() {
 
     document.getElementById('iraTarget').addEventListener('input', (e) => {
         state.yearlyTargets[getIraYear()] = Number(e.target.value) || 0;
-        save();
+        commit();
         renderIraPanel();
     });
 
@@ -683,7 +1290,7 @@ function wireEvents() {
         if (!el.classList.contains('amount-input')) return;
         const { cat, item, kind } = el.dataset;
         getActiveMonth()[cat][item][kind] = Number(el.value) || 0;
-        save();
+        commit();
         renderSummary();
         updateCardDiff(cat, item);
         updateCategoryTotals(cat);
@@ -692,7 +1299,7 @@ function wireEvents() {
 
     document.getElementById('notesField').addEventListener('input', (e) => {
         getActiveMonth().notes = e.target.value;
-        save();
+        commit();
     });
 
     document.addEventListener('keydown', (e) => {
@@ -721,6 +1328,7 @@ async function init() {
     syncConfig = loadSyncConfig();
     wireEvents();
     renderAll();
+    setInterval(renderLastUpdated, 30000);
     renderSyncBtn();
 
     if (syncConfig) {
