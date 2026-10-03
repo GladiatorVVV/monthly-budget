@@ -16,6 +16,7 @@
     --green: #4ade80;
     --amber: #ffc857;
     --red: #ff4d6d;
+    --blue: #3d8bff;
     --radius: 14px;
     --radius-sm: 8px;
     --glow-cyan: 0 0 20px rgba(0, 229, 255, 0.35), 0 0 40px rgba(0, 229, 255, 0.15);
@@ -703,6 +704,44 @@ body {
 
 .amount-input.is-actual:not(:placeholder-shown) {
     color: var(--cyan-soft);
+}
+
+/* Item progress bar: actual vs projected */
+.cat-progress {
+    --prog: var(--blue);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.cat-progress.prog-done { --prog: var(--green); }
+.cat-progress.prog-over { --prog: var(--red); }
+
+.cat-progress-track {
+    flex: 1;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.cat-progress-fill {
+    height: 100%;
+    background: var(--prog);
+    border-radius: 999px;
+    box-shadow: 0 0 10px var(--prog);
+    transition: width 0.4s cubic-bezier(0.25, 1, 0.5, 1), background-color 0.2s ease;
+}
+
+.cat-progress-pct {
+    min-width: 62px;
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--prog);
 }
 
 .cat-diff {
