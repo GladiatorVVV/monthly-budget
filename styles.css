@@ -247,6 +247,28 @@ body {
 
 .btn-sync { min-width: 160px; justify-content: center; }
 
+.month-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.btn-ytd {
+    background: linear-gradient(135deg, rgba(255,93,242,0.16), rgba(185,103,255,0.16));
+    border-color: rgba(255,93,242,0.45);
+    color: #ffb3f8;
+}
+
+.btn-ytd:hover {
+    border-color: rgba(255,93,242,0.75);
+    box-shadow: var(--glow-magenta);
+}
+
+.btn-ytd.is-active {
+    background: transparent;
+    border-color: var(--border-hi);
+    color: var(--cyan-soft);
+}
+
 .btn-sync-connected {
     background: linear-gradient(135deg, rgba(74,222,128,0.15), rgba(0,229,255,0.1));
     border-color: rgba(74,222,128,0.4);
@@ -1299,6 +1321,14 @@ body {
     color: var(--cyan-soft);
 }
 
+.yr-pace-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+}
+
+.yr-pace .yr-record-value { font-size: 20px; }
+
 /* Category performance */
 .yr-cats { display: flex; flex-direction: column; gap: 18px; }
 
@@ -1384,6 +1414,7 @@ body {
     .ira-months { grid-template-columns: repeat(6, 1fr); }
     .yr-tiles { grid-template-columns: repeat(2, 1fr); }
     .yr-two { grid-template-columns: 1fr; }
+    .yr-pace-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 600px) {
@@ -1398,12 +1429,14 @@ body {
     .header-actions { width: 100%; }
     .header-actions .btn { flex: 1; justify-content: center; }
     .month-bar { flex-wrap: wrap; }
-    .month-bar #newMonthBtn { order: 1; width: 100%; justify-content: center; }
+    .month-actions { order: 1; width: 100%; }
+    .month-actions .btn { flex: 1; justify-content: center; padding: 10px 8px; }
     .month-select { font-size: 17px; }
     .nav-btn { width: 36px; height: 36px; }
     .yr-hero-title { font-size: 21px; }
     .yr-hero-net { text-align: left; }
     .yr-tiles { grid-template-columns: 1fr; }
+    .yr-pace-grid { grid-template-columns: 1fr; }
     .yr-cols, .yr-xaxis { gap: 2px; }
     .yr-yaxis { width: 38px; }
     .yr-xaxis { margin-left: 38px; font-size: 8px; letter-spacing: 0; }
